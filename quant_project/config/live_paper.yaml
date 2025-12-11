@@ -1,0 +1,16 @@
+data:
+  symbol: "BTCUSDT"
+  timeframe: "1m"
+  poll_interval_seconds: 60
+
+execution:
+  paper: true
+  leverage: 1.0
+
+risk:
+  max_daily_loss: 0.01
+  max_position_pct: 0.05
+
+models:
+  primary_model_path: "./models/primary.pkl"
+  meta_model_path: "./models/meta.pkl"

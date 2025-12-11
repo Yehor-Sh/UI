@@ -1,0 +1,13 @@
+app:
+  name: "quant_project"
+  environment: "development"
+logging:
+  level: "INFO"
+  file: null
+binance:
+  api_key: "${BINANCE_API_KEY}"
+  api_secret: "${BINANCE_API_SECRET}"
+  base_url: "https://api.binance.com"
+paths:
+  data_dir: "./data"
+  model_dir: "./models"

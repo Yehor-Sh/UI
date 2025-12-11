@@ -1,0 +1,25 @@
+data:
+  symbol: "BTCUSDT"
+  timeframe: "1h"
+  start: "2022-01-01"
+  end: "2022-06-01"
+  storage_format: "parquet"
+
+features:
+  fractional_diff_d: 0.5
+  window_short: 12
+  window_long: 48
+
+labeling:
+  pt_sl: [2.0, 1.0]
+  max_holding_hours: 24
+
+models:
+  primary_model_path: "./models/primary.pkl"
+  meta_model_path: "./models/meta.pkl"
+  cv_folds: 5
+
+risk:
+  max_daily_loss: 0.02
+  max_position_pct: 0.1
+  embargo_hours: 2
