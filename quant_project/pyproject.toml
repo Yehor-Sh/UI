@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-project"
+version = "0.1.0"
+description = "López de Prado inspired quantitative trading system for Binance"
+authors = [
+  {name = "Quant Team", email = "quant@example.com"}
+]
+requires-python = ">=3.11"
+dependencies = [
+  "numpy",
+  "pandas",
+  "scipy",
+  "scikit-learn",
+  "pydantic",
+  "pyyaml",
+  "requests",
+  "websockets",
+  "matplotlib",
+  "python-binance",
+  "fastapi"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
