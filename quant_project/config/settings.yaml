@@ -11,3 +11,8 @@ binance:
 paths:
   data_dir: "./data"
   model_dir: "./models"
+
+streaming:
+  symbol: "BTCUSDT"
+  interval: "1m"
+  mode: "synthetic"  # set to "binance" for live-paper runs
