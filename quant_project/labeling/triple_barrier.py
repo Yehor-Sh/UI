@@ -66,3 +66,68 @@ def apply_triple_barrier(
     result = pd.DataFrame(out).set_index("start_time")
     logger.info("Generated %d triple-barrier labels", len(result))
     return result
+
+
+def apply_triple_barrier_vol(
+    prices: pd.Series,
+    events: pd.Series,
+    vol: pd.Series,
+    pt_mult: float,
+    sl_mult: float,
+    max_holding: int,
+) -> pd.DataFrame:
+    """Apply triple-barrier labeling using volatility-based barriers.
+
+    Using volatility-based barriers adapts to regime changes and aligns with
+    the methodology described in "Advances in Financial Machine Learning". The
+    upper barrier equals ``start_price * (1 + pt_mult * vol_at_event)`` and the
+    lower barrier equals ``start_price * (1 - sl_mult * vol_at_event)``. The
+    time barrier is defined by ``max_holding`` forward bars.
+    """
+
+    out = []
+    for start_time, side in events.items():
+        if start_time not in prices.index or start_time not in vol.index:
+            logger.debug("Skipping event at %s due to missing data", start_time)
+            continue
+
+        start_price = prices.loc[start_time]
+        vol_at_event = vol.loc[start_time]
+        if pd.isna(vol_at_event):
+            logger.debug("Skipping event at %s due to NaN volatility", start_time)
+            continue
+
+        upper_barrier = start_price * (1 + pt_mult * vol_at_event)
+        lower_barrier = start_price * (1 - sl_mult * vol_at_event)
+
+        start_idx = prices.index.get_loc(start_time)
+        price_path = prices.iloc[start_idx : start_idx + max_holding + 1]
+
+        touched = None
+        touch_time = None
+        realized_ret = None
+        for t, price in price_path.items():
+            move = price / start_price - 1
+            if price >= upper_barrier:
+                touched = 1
+                touch_time = t
+                realized_ret = move
+                break
+            if price <= lower_barrier:
+                touched = -1
+                touch_time = t
+                realized_ret = move
+                break
+
+        if touched is None:
+            final_price = price_path.iloc[-1]
+            touched = np.sign(final_price - start_price)
+            touch_time = price_path.index[-1]
+            realized_ret = final_price / start_price - 1
+
+        label = side * touched if touched != 0 else 0
+        out.append({"start_time": start_time, "t1": touch_time, "label": label, "ret": realized_ret})
+
+    result = pd.DataFrame(out).set_index("start_time")
+    logger.info("Generated %d volatility-based triple-barrier labels", len(result))
+    return result

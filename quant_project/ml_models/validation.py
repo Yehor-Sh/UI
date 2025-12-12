@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
-from typing import Iterable
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
