@@ -26,6 +26,20 @@ def rolling_volatility(returns: pd.Series, window: int) -> pd.Series:
     return vol
 
 
+def compute_volatility(prices: pd.Series, span: int = 50) -> pd.Series:
+    """Compute an exponentially weighted volatility estimate from returns.
+
+    Using volatility-based barriers adapts to changing market regimes and is
+    closer to the methodology suggested in "Advances in Financial Machine
+    Learning". The resulting series is aligned with the input prices index.
+    """
+
+    returns = np.log(prices).diff()
+    vol = returns.ewm(span=span).std()
+    logger.debug("Computed EWM volatility span=%d", span)
+    return vol
+
+
 def simple_moving_average(prices: pd.Series, window: int) -> pd.Series:
     """Compute SMA."""
 

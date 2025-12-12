@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import List
+from dataclasses import dataclass, field, replace
+from typing import List, Mapping, Optional
 
 from quant_project.core.types import PortfolioState, Signal
 from quant_project.risk_management.rules import MaxDailyLossRule, MaxPositionRule
