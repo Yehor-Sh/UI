@@ -6,6 +6,9 @@ synthetic generation, or the live Binance REST API using python-binance.
 from __future__ import annotations
 
 import logging
+
+logger = logging.getLogger(__name__)
+
 import os
 import time
 from datetime import datetime
@@ -14,11 +17,15 @@ from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from binance.client import Client
+
+try:
+    from binance.client import Client as SyncClient
+except ImportError:  # pragma: no cover - runtime dependency
+    SyncClient = None
+    logger.warning(
+        "python-binance not installed; Binance historical downloads will be unavailable.")
 
 from quant_project.core.utils import ensure_directory
-
-logger = logging.getLogger(__name__)
 
 
 class HistoricalDataClient:
@@ -66,9 +73,15 @@ class HistoricalDataClient:
         )
 
         if source == "binance":
-            df = self.load_from_binance(symbol, interval, start_ts.to_pydatetime(), end_ts.to_pydatetime())
-        else:
+            df = self.load_from_binance(
+                symbol, interval, start_ts.to_pydatetime(), end_ts.to_pydatetime()
+            )
+        elif source == "synthetic":
             df = self._fetch_stub_data(symbol, interval, start_ts, end_ts)
+        else:
+            raise ValueError(f"Unsupported data source: {source}")
+
+        logger.info("Loaded %s rows for %s via %s", len(df), symbol, source)
 
         if fmt == "csv":
             df.to_csv(file_path)
@@ -109,12 +122,24 @@ class HistoricalDataClient:
         ``['open', 'high', 'low', 'close', 'volume']``.
         """
 
+        if SyncClient is None:
+            logger.warning(
+                "python-binance is required for Binance downloads; install python-binance to proceed."
+            )
+            raise RuntimeError("Binance client unavailable; install python-binance to enable downloads.")
+
         api_key = self._resolve_secret(self.binance_config.get("api_key"))
         api_secret = self._resolve_secret(self.binance_config.get("api_secret"))
         base_url = self.binance_config.get("base_url")
         use_testnet = bool(self.binance_config.get("use_testnet", False))
 
-        client = Client(api_key=api_key, api_secret=api_secret, testnet=use_testnet)
+        if not api_key or not api_secret:
+            logger.warning(
+                "Binance API credentials are missing. Set BINANCE_API_KEY and BINANCE_API_SECRET or update configuration."
+            )
+            raise RuntimeError("Binance credentials are required to download historical data.")
+
+        client = SyncClient(api_key=api_key, api_secret=api_secret, testnet=use_testnet)
         if base_url:
             client.API_URL = base_url
 
