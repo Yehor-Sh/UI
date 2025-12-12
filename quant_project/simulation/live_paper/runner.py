@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from quant_project.core.types import Order, OrderType, PortfolioState
+from quant_project.core.types import Bar, Order, OrderType, PortfolioState
 from quant_project.core.utils import generate_order_id
 from quant_project.data_ingestion.live_stream import run_stream
 from quant_project.simulation.live_paper.paper_broker import PaperBroker
@@ -19,7 +19,18 @@ from quant_project.strategy_engine.position_sizing import fixed_fractional
 logger = logging.getLogger(__name__)
 
 
-def _row_from_bar(bar: pd.Series) -> pd.Series:
+def _row_from_bar(bar: pd.Series | Bar) -> pd.Series:
+    if isinstance(bar, Bar):
+        return pd.Series(
+            {
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "volume": bar.volume,
+            },
+            name=bar.timestamp,
+        )
     return bar
 
 
