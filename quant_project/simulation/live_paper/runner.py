@@ -79,6 +79,9 @@ async def run_live_paper(
     initial_cash: float,
     risk_manager: RiskManager | None = None,
     risk_config: dict | None = None,
+    *,
+    mode: str = "synthetic",
+    binance_config: dict | None = None,
 ) -> LiveSessionState:
     portfolio = PortfolioState(cash=initial_cash, positions={})
     session = LiveSessionState(start_time=datetime.utcnow(), portfolio=portfolio)
@@ -88,5 +91,15 @@ async def run_live_paper(
     async def callback(bar: pd.Series) -> None:
         await _handle_bar(bar, strategy, session, broker, symbol, risk_manager)
 
-    await run_stream(symbol, timeframe, poll_interval, lambda bar: asyncio.create_task(callback(bar)))
+    binance_config = binance_config or {}
+    await run_stream(
+        symbol,
+        timeframe,
+        poll_interval,
+        lambda bar: asyncio.create_task(callback(bar)),
+        mode=mode,
+        binance_api_key=binance_config.get("api_key"),
+        binance_api_secret=binance_config.get("api_secret"),
+        binance_base_url=binance_config.get("base_url"),
+    )
     return session
