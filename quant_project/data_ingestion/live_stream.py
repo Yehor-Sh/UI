@@ -10,14 +10,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import AsyncIterator, Callable, Iterable, Optional
+from typing import Any, AsyncIterator, Callable, Iterable, Optional
 
 import numpy as np
-from binance import AsyncClient
 
 from quant_project.core.types import Bar
 
 logger = logging.getLogger(__name__)
+
+try:
+    from binance import AsyncClient
+except ImportError:
+    AsyncClient = None
+    logger.warning("python-binance not installed; Binance streaming mode will be unavailable.")
 
 
 class LiveStream:
@@ -42,17 +47,31 @@ class LiveStream:
         self.symbol = symbol
         self.timeframe = timeframe
         self.poll_interval = poll_interval
-        self.mode = mode
+        self.mode = mode.lower()
         self.binance_api_key = binance_api_key
         self.binance_api_secret = binance_api_secret
         self.binance_base_url = binance_base_url
         self.reconnect_delay = reconnect_delay
 
+        if self.mode == "binance" and AsyncClient is None:
+            logger.error(
+                "python-binance is unavailable; falling back to synthetic streaming mode for %s.",
+                self.symbol,
+            )
+            self.mode = "synthetic"
+
     async def __aiter__(self) -> AsyncIterator[Bar]:
-        if self.mode.lower() == "binance":
+        if self.mode == "binance":
+            logger.info("Starting Binance streaming mode for %s on %s", self.symbol, self.timeframe)
             async for bar in self._binance_stream():
                 yield bar
         else:
+            if self.mode != "synthetic":
+                logger.warning(
+                    "Unknown streaming mode '%s' requested; defaulting to synthetic for %s.",
+                    self.mode,
+                    self.symbol,
+                )
             async for bar in self._synthetic_stream():
                 yield bar
 
@@ -64,40 +83,59 @@ class LiveStream:
             await asyncio.sleep(self.poll_interval)
 
     async def _binance_stream(self) -> AsyncIterator[Bar]:
+        if AsyncClient is None:
+            logger.error(
+                "Binance streaming requested but python-binance is unavailable; using synthetic mode for %s.",
+                self.symbol,
+            )
+            async for bar in self._synthetic_stream():
+                yield bar
+            return
+
         client: AsyncClient | None = None
         last_close: Optional[int] = None
-        while True:
-            try:
-                if client is None:
-                    client = await AsyncClient.create(
-                        api_key=self.binance_api_key,
-                        api_secret=self.binance_api_secret,
-                        base_url=self.binance_base_url,
-                    )
-                    logger.info("Connected to Binance for %s %s", self.symbol, self.timeframe)
+        fallback_to_synthetic = False
 
-                klines: Iterable[list] = await client.get_klines(symbol=self.symbol, interval=self.timeframe, limit=2)
-                new_bars = []
-                for kline in klines:
-                    close_time = int(kline[6])
-                    if last_close is None or close_time > last_close:
-                        bar = self._kline_to_bar(kline)
-                        new_bars.append(bar)
-                        last_close = close_time if last_close is None else max(last_close, close_time)
+        try:
+            client = await AsyncClient.create(
+                api_key=self.binance_api_key,
+                api_secret=self.binance_api_secret,
+                base_url=self.binance_base_url,
+            )
+            logger.info("Connected to Binance for %s %s", self.symbol, self.timeframe)
 
-                for bar in sorted(new_bars, key=lambda b: b.timestamp):
+            while True:
+                klines: Iterable[list] = await client.get_klines(
+                    symbol=self.symbol, interval=self.timeframe, limit=2
+                )
+                if not klines:
+                    logger.debug("No klines returned for %s on %s", self.symbol, self.timeframe)
+                    await asyncio.sleep(self.poll_interval)
+                    continue
+
+                latest = list(klines)[-1]
+                close_time = int(latest[6])
+                if last_close is None or close_time > last_close:
+                    bar = self._kline_to_bar(latest)
+                    last_close = close_time
                     yield bar
 
                 await asyncio.sleep(self.poll_interval)
-            except Exception:
-                logger.exception("Error while streaming from Binance; reconnecting after %.1fs", self.reconnect_delay)
-                if client is not None:
-                    try:
-                        await client.close_connection()
-                    except Exception:
-                        logger.debug("Error closing Binance client during reconnect", exc_info=True)
-                    client = None
-                await asyncio.sleep(self.reconnect_delay)
+        except Exception:
+            fallback_to_synthetic = True
+            logger.exception(
+                "Error while streaming from Binance; falling back to synthetic mode for %s.", self.symbol
+            )
+        finally:
+            if client is not None:
+                try:
+                    await client.close_connection()
+                except Exception:
+                    logger.debug("Error closing Binance client during shutdown for %s", self.symbol, exc_info=True)
+
+        if fallback_to_synthetic:
+            async for bar in self._synthetic_stream():
+                yield bar
 
     def _generate_bar(self) -> Bar:
         now = datetime.utcnow()
@@ -128,7 +166,7 @@ async def run_stream(
     symbol: str,
     timeframe: str,
     poll_interval: float,
-    callback: Callable[[Bar], None],
+    callback: Callable[[Bar], Any],
     *,
     mode: str = "synthetic",
     binance_api_key: Optional[str] = None,
