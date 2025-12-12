@@ -23,8 +23,17 @@ def run_backtest(config_path: str) -> None:
     config = load_yaml(config_path)
     setup_logging(config.get("logging", {}).get("level", "INFO"))
     data_cfg = config["data"]
-    hist_client = HistoricalDataClient(config.get("paths", {}).get("data_dir", "./data"))
-    df = hist_client.load(data_cfg["symbol"], data_cfg["timeframe"], data_cfg["start"], data_cfg["end"])
+    hist_client = HistoricalDataClient(
+        config.get("paths", {}).get("data_dir", "./data"), binance_config=config.get("binance", {})
+    )
+    df = hist_client.load(
+        data_cfg["symbol"],
+        data_cfg["interval"],
+        data_cfg["start"],
+        data_cfg["end"],
+        source=data_cfg.get("source", "synthetic"),
+        fmt=data_cfg.get("storage_format", "parquet"),
+    )
     features = prepare_offline_features(df["close"], {"sma_short": 12, "sma_long": 48}, d=config["features"]["fractional_diff_d"])
     labels = (features["returns"] > 0).astype(int)
     primary_model = train_primary_model(features, labels)
@@ -48,8 +57,17 @@ def run_train_model(config_path: str) -> None:
     config = load_yaml(config_path)
     setup_logging(config.get("logging", {}).get("level", "INFO"))
     data_cfg = config["data"]
-    hist_client = HistoricalDataClient(config.get("paths", {}).get("data_dir", "./data"))
-    df = hist_client.load(data_cfg["symbol"], data_cfg["timeframe"], data_cfg.get("start", "2022-01-01"), data_cfg.get("end", "2022-02-01"))
+    hist_client = HistoricalDataClient(
+        config.get("paths", {}).get("data_dir", "./data"), binance_config=config.get("binance", {})
+    )
+    df = hist_client.load(
+        data_cfg["symbol"],
+        data_cfg["interval"],
+        data_cfg.get("start", "2022-01-01"),
+        data_cfg.get("end", "2022-02-01"),
+        source=data_cfg.get("source", "synthetic"),
+        fmt=data_cfg.get("storage_format", "parquet"),
+    )
     features = prepare_offline_features(df["close"], {"sma_short": 12, "sma_long": 48}, d=config.get("features", {}).get("fractional_diff_d", 0.5))
     labels = (features["returns"] > 0).astype(int)
     primary_model = train_primary_model(features, labels)
