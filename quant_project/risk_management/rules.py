@@ -22,7 +22,27 @@ class MaxDailyLossRule:
 class MaxPositionRule:
     max_pct: float
 
-    def validate(self, portfolio: PortfolioState, symbol: str, proposed_qty: float, price: float) -> bool:
+    def adjust(self, portfolio: PortfolioState, symbol: str, signal: Signal, price: float) -> Signal | None:
         equity = portfolio.total_value({symbol: price})
-        exposure = abs(proposed_qty * price) / equity if equity else 0
-        return exposure <= self.max_pct
+        if price <= 0 or equity <= 0:
+            return None
+
+        max_quantity = (self.max_pct * equity) / price
+        proposed_quantity = abs(signal.size)
+
+        if proposed_quantity == 0:
+            return signal
+
+        if proposed_quantity <= max_quantity:
+            return signal
+
+        if max_quantity <= 0:
+            return None
+
+        adjusted_size = max_quantity
+        return Signal(
+            timestamp=signal.timestamp,
+            side=signal.side,
+            confidence=signal.confidence,
+            size=adjusted_size,
+        )
