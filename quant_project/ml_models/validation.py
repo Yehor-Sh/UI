@@ -13,30 +13,53 @@ from sklearn.metrics import accuracy_score
 logger = logging.getLogger(__name__)
 
 
-def purged_kfold(n_splits: int, embargo: int, index: Iterable[pd.Timestamp]) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Generate purged and embargoed folds.
+def purged_kfold(
+    n_splits: int,
+    embargo: int | None = None,
+    index: Iterable[pd.Timestamp] | None = None,
+    *,
+    timestamps: Iterable[pd.Timestamp] | None = None,
+    embargo_pct: float | None = None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Generate purged and embargoed folds following López de Prado.
 
     Parameters
     ----------
     n_splits : int
         Number of folds.
-    embargo : int
+    embargo : int, optional
         Embargo period in index units (e.g., hours) to avoid leakage across
-        adjacent folds.
-    index : Iterable[pd.Timestamp]
-        Sorted timestamps.
+        adjacent folds. Kept for backward compatibility. If provided alongside
+        ``embargo_pct``, the percentage-based value takes precedence.
+    index : Iterable[pd.Timestamp], optional
+        Sorted timestamps. Kept for backward compatibility; ``timestamps`` is
+        preferred.
+    timestamps : Iterable[pd.Timestamp], optional
+        Sorted timestamps aligned to the feature set; if omitted, ``index`` is
+        used.
+    embargo_pct : float, optional
+        Fraction of samples to embargo on each side of a validation fold. When
+        not provided, defaults to zero or ``embargo`` if passed.
     """
 
-    index = pd.Index(index)
-    fold_sizes = len(index) // n_splits
+    source_index = timestamps if timestamps is not None else index
+    if source_index is None:
+        raise ValueError("Either timestamps or index must be provided for purged_kfold.")
+
+    idx = pd.Index(source_index)
+    if idx.is_monotonic_increasing is False:
+        idx = idx.sort_values()
+
+    embargo = int(len(idx) * (embargo_pct or 0)) if embargo_pct is not None else int(embargo or 0)
+    fold_sizes = len(idx) // n_splits
     folds = []
     for k in range(n_splits):
         start = k * fold_sizes
-        end = start + fold_sizes if k < n_splits - 1 else len(index)
-        test_idx = index[start:end]
+        end = start + fold_sizes if k < n_splits - 1 else len(idx)
+        test_idx = idx[start:end]
         embargo_start = max(0, start - embargo)
-        embargo_end = min(len(index), end + embargo)
-        train_idx = index.delete(np.arange(embargo_start, embargo_end))
+        embargo_end = min(len(idx), end + embargo)
+        train_idx = idx.delete(np.arange(embargo_start, embargo_end))
         folds.append((train_idx.values, test_idx.values))
     logger.info("Generated %d purged folds with embargo=%d", n_splits, embargo)
     return folds
