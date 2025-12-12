@@ -14,79 +14,54 @@ logger = logging.getLogger(__name__)
 
 def purged_kfold(
     n_splits: int,
-    timestamps: pd.Series,
-    embargo_pct: float = 0.01,
-) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """Generate purged and embargoed folds for time series cross-validation.
-
-    The folds follow López de Prado's *Advances in Financial Machine Learning*
-    chapter on **Cross-Validation in the presence of overlapping samples**.
-    Each validation slice is contiguous in time, while training samples are
-    "purged" (removed) if their timestamps overlap the validation window. An
-    **embargo** interval on both sides of the validation window further removes
-    temporally adjacent observations, reducing look-ahead bias from near-future
-    information leaks.
+    embargo: int | None = None,
+    index: Iterable[pd.Timestamp] | None = None,
+    *,
+    timestamps: Iterable[pd.Timestamp] | None = None,
+    embargo_pct: float | None = None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Generate purged and embargoed folds following López de Prado.
 
     Parameters
     ----------
-    n_splits : number of folds
-    timestamps : pd.Series indexed like the samples (or aligned index) with datetime values
-    embargo_pct : size of the embargo around validation segments, as fraction of total samples
-
-    Returns
-    -------
-    List of (train_idx, test_idx) index arrays that:
-    - are non-overlapping in time,
-    - have purging: training samples that overlap in time with validation are removed,
-    - have embargo: training samples within an embargo window around the validation fold are removed.
+    n_splits : int
+        Number of folds.
+    embargo : int, optional
+        Embargo period in index units (e.g., hours) to avoid leakage across
+        adjacent folds. Kept for backward compatibility. If provided alongside
+        ``embargo_pct``, the percentage-based value takes precedence.
+    index : Iterable[pd.Timestamp], optional
+        Sorted timestamps. Kept for backward compatibility; ``timestamps`` is
+        preferred.
+    timestamps : Iterable[pd.Timestamp], optional
+        Sorted timestamps aligned to the feature set; if omitted, ``index`` is
+        used.
+    embargo_pct : float, optional
+        Fraction of samples to embargo on each side of a validation fold. When
+        not provided, defaults to zero or ``embargo`` if passed.
     """
 
-    if n_splits < 2:
-        raise ValueError("n_splits must be at least 2 for cross-validation")
+    source_index = timestamps if timestamps is not None else index
+    if source_index is None:
+        raise ValueError("Either timestamps or index must be provided for purged_kfold.")
 
-    timestamps = pd.Series(timestamps)
-    if timestamps.empty:
-        return []
+    idx = pd.Index(source_index)
+    if idx.is_monotonic_increasing is False:
+        idx = idx.sort_values()
 
-    n_samples = len(timestamps)
-    embargo = int(np.ceil(n_samples * embargo_pct)) if embargo_pct > 0 else 0
-
-    # Build contiguous time-based folds using positional indices to preserve order.
-    fold_sizes = np.full(n_splits, n_samples // n_splits, dtype=int)
-    fold_sizes[: n_samples % n_splits] += 1
-
-    splits: List[Tuple[np.ndarray, np.ndarray]] = []
-    start = 0
-    for fold_size in fold_sizes:
-        stop = start + fold_size
-        test_pos = np.arange(start, stop)
-        test_idx = timestamps.index[test_pos].to_numpy()
-
-        test_start_ts = timestamps.iloc[test_pos[0]]
-        test_end_ts = timestamps.iloc[test_pos[-1]]
-
-        # Purge any training observation whose timestamp overlaps the validation interval.
-        purge_mask = (timestamps >= test_start_ts) & (timestamps <= test_end_ts)
-
-        # Apply an embargo window around the validation slice using positional indices.
-        embargo_start = max(0, test_pos[0] - embargo)
-        embargo_end = min(n_samples, test_pos[-1] + embargo + 1)
-        embargo_mask = np.zeros(n_samples, dtype=bool)
-        embargo_mask[embargo_start:embargo_end] = True
-
-        train_mask = ~(purge_mask | embargo_mask)
-        train_idx = timestamps.index[train_mask].to_numpy()
-
-        splits.append((train_idx, test_idx))
-        start = stop
-
-    logger.info(
-        "Generated %d purged folds with embargo_pct=%.4f (embargo=%d samples)",
-        n_splits,
-        embargo_pct,
-        embargo,
-    )
-    return splits
+    embargo = int(len(idx) * (embargo_pct or 0)) if embargo_pct is not None else int(embargo or 0)
+    fold_sizes = len(idx) // n_splits
+    folds = []
+    for k in range(n_splits):
+        start = k * fold_sizes
+        end = start + fold_sizes if k < n_splits - 1 else len(idx)
+        test_idx = idx[start:end]
+        embargo_start = max(0, start - embargo)
+        embargo_end = min(len(idx), end + embargo)
+        train_idx = idx.delete(np.arange(embargo_start, embargo_end))
+        folds.append((train_idx.values, test_idx.values))
+    logger.info("Generated %d purged folds with embargo=%d", n_splits, embargo)
+    return folds
 
 
 def evaluate_model(model: BaseEstimator, X: pd.DataFrame, y: pd.Series) -> float:
