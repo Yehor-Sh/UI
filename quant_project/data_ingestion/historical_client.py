@@ -1,17 +1,20 @@
 """Historical data client.
 
-Provides simplified accessors to load OHLCV data either from local storage or
-from Binance REST. For demonstration, REST requests are stubbed; in practice you
-would integrate with python-binance or ccxt.
+Provides simplified accessors to load OHLCV data either from local storage,
+synthetic generation, or the live Binance REST API using python-binance.
 """
 from __future__ import annotations
 
 import logging
+import os
+import time
+from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
+from binance.client import Client
 
 from quant_project.core.utils import ensure_directory
 
@@ -21,15 +24,17 @@ logger = logging.getLogger(__name__)
 class HistoricalDataClient:
     """Client to load historical OHLCV data."""
 
-    def __init__(self, data_dir: str | Path) -> None:
+    def __init__(self, data_dir: str | Path, binance_config: dict[str, Any] | None = None) -> None:
         self.data_dir = ensure_directory(data_dir)
+        self.binance_config = binance_config or {}
 
     def load(
         self,
         symbol: str,
-        timeframe: str,
-        start: str,
-        end: str,
+        interval: str,
+        start: str | datetime,
+        end: str | datetime,
+        source: Literal["binance", "synthetic"] = "synthetic",
         fmt: Literal["csv", "parquet"] = "parquet",
     ) -> pd.DataFrame:
         """Load historical data from disk or fetch from a remote source.
@@ -38,29 +43,45 @@ class HistoricalDataClient:
         the configured `data_dir`.
         """
 
-        file_path = self.data_dir / f"{symbol}_{timeframe}.{fmt}"
+        file_path = self.data_dir / f"{symbol}_{interval}_{source}.{fmt}"
         if file_path.exists():
-            logger.info("Loading %s data from %s", symbol, file_path)
+            logger.info("Loading %s %s data from %s", symbol, interval, file_path)
             if fmt == "csv":
                 df = pd.read_csv(file_path, parse_dates=["timestamp"], index_col="timestamp")
             else:
                 df = pd.read_parquet(file_path)
+            logger.info("Loaded %s rows for %s from cache", len(df), symbol)
+            return df
+
+        start_ts = pd.to_datetime(start, utc=True)
+        end_ts = pd.to_datetime(end, utc=True)
+
+        logger.info(
+            "Fetching %s data for %s from %s to %s via %s",
+            interval,
+            symbol,
+            start_ts,
+            end_ts,
+            source,
+        )
+
+        if source == "binance":
+            df = self.load_from_binance(symbol, interval, start_ts.to_pydatetime(), end_ts.to_pydatetime())
         else:
-            logger.info("Data for %s not found locally. Fetching stub data.", symbol)
-            df = self._fetch_stub_data(symbol, timeframe, start, end)
-            if fmt == "csv":
-                df.to_csv(file_path)
-            else:
-                df.to_parquet(file_path)
+            df = self._fetch_stub_data(symbol, interval, start_ts, end_ts)
+
+        if fmt == "csv":
+            df.to_csv(file_path)
+        else:
+            df.to_parquet(file_path)
+
+        logger.info("Persisted %s rows for %s to %s", len(df), symbol, file_path)
         return df
 
-    def _fetch_stub_data(self, symbol: str, timeframe: str, start: str, end: str) -> pd.DataFrame:
-        """Generate synthetic data for demonstration.
+    def _fetch_stub_data(self, symbol: str, interval: str, start: datetime | str, end: datetime | str) -> pd.DataFrame:
+        """Generate synthetic data for demonstration."""
 
-        Replace with actual Binance REST calls using python-binance client.
-        """
-
-        date_range = pd.date_range(start=start, end=end, freq=timeframe)
+        date_range = pd.date_range(start=start, end=end, freq=interval)
         prices = pd.Series(100 + np.random.randn(len(date_range)).cumsum(), index=date_range)
         df = pd.DataFrame(
             {
@@ -73,3 +94,72 @@ class HistoricalDataClient:
         )
         df.index.name = "timestamp"
         return df
+
+    def load_from_binance(
+        self,
+        symbol: str,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> pd.DataFrame:
+        """
+        Load historical OHLCV data from Binance.
+
+        Returns a DataFrame indexed by UTC timestamps with columns:
+        ``['open', 'high', 'low', 'close', 'volume']``.
+        """
+
+        api_key = self._resolve_secret(self.binance_config.get("api_key"))
+        api_secret = self._resolve_secret(self.binance_config.get("api_secret"))
+        base_url = self.binance_config.get("base_url")
+        use_testnet = bool(self.binance_config.get("use_testnet", False))
+
+        client = Client(api_key=api_key, api_secret=api_secret, testnet=use_testnet)
+        if base_url:
+            client.API_URL = base_url
+
+        start_ms = int(start.timestamp() * 1000)
+        end_ms = int(end.timestamp() * 1000)
+
+        logger.info("Requesting Binance klines for %s %s", symbol, interval)
+        klines = client.get_historical_klines(symbol=symbol, interval=interval, start_str=start_ms, end_str=end_ms)
+        time.sleep(0.2)
+
+        if not klines:
+            logger.warning("No data returned from Binance for %s", symbol)
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])  # pragma: no cover
+
+        df = pd.DataFrame(
+            klines,
+            columns=[
+                "open_time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "close_time",
+                "quote_asset_volume",
+                "number_of_trades",
+                "taker_buy_base",
+                "taker_buy_quote",
+                "ignore",
+            ],
+        )
+
+        df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        df = df.set_index("timestamp")
+        numeric_cols = ["open", "high", "low", "close", "volume"]
+        df[numeric_cols] = df[numeric_cols].astype(float)
+        result = df[numeric_cols]
+        logger.info("Loaded %s rows from Binance for %s", len(result), symbol)
+        return result
+
+    @staticmethod
+    def _resolve_secret(value: str | None) -> str | None:
+        """Resolve environment variable placeholders like ``${VAR}``."""
+
+        if value and value.startswith("${") and value.endswith("}"):
+            env_var = value.strip("${}")
+            return os.getenv(env_var)
+        return value

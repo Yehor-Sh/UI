@@ -1,9 +1,16 @@
 data:
   symbol: "BTCUSDT"
-  timeframe: "1h"
+  interval: "1h"
+  source: "synthetic"
   start: "2022-01-01"
   end: "2022-06-01"
   storage_format: "parquet"
+
+binance:
+  api_key: "${BINANCE_API_KEY}"
+  api_secret: "${BINANCE_API_SECRET}"
+  base_url: "https://api.binance.com"
+  use_testnet: false
 
 features:
   fractional_diff_d: 0.5
